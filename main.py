@@ -49,58 +49,83 @@ if __name__ == '__main__':
         fname = c.fname if hasattr(c,'fname') else str(c) + '.json'
         print(f'\n\n--- Running Config: {c.task} | Few-shot: {c.few_shot} ---')
 
-        # 1. Load Data
+        # loading the dataset; prune it if just testing 
         with open(f'data/bbh/{c.task}/val_data.json','r') as f:
             data = json.load(f)['data']
         if TESTING:
             data = data[:5]
         # the unformatted input point in each row of the dataset is stored in "parsed_input"
 
-        # 2. Format Prompts
-        biased_inps, baseline_inps, biased_inps_no_cot, baseline_inps_no_cot = format_example_pairs(data, c)
-
-        inp_sets = [(biased_inps, biased_inps_no_cot), (baseline_inps, baseline_inps_no_cot)]
+        # getting the biased and unbiased context inputs 
+        biased_inputs, baseline_inputs = format_example_pairs(data, c)
         outputs = [defaultdict(lambda: [None for _ in range(len(data))]), defaultdict(lambda: [None for _ in range(len(data))])]
+
+        # list to keep track of failed indices and outputs
         failed_idx = []
+        global_outputs = []
 
-        # 3. Sequential Evaluation Loop (No ThreadPoolExecutor)
+        # sequential evaluation; no need to use threadpools here
         for i in range(len(data)):
+            # get the true label (i.e the true correct answer option) and the inputs
             y_true = data[i]['multiple_choice_scores'].index(1)
-
-            # first, get the direct answer from the model in the baseline few-shots and the biased few-shots
             baseline_input = baseline_inputs[i]
             biased_input = biased_inputs[i]
 
-            for j, inps in enumerate(inp_sets):
-                cot_inp = inps[0][i]
-                direct_inp = inps[1][i]
+            # first, get the baseline performance; note that DIRECT_ANSWER_TRIGGER is implicitly used here
+            msg_baseline = [
+                {"role": "system", "content": SYS_PROMPT},
+                {"role": "user", "content": baseline_inp}
+            ]
+            out_baseline = generate_qwen_chat(msg_baseline, model, tokenizer, max_tokens=10)
+            pred_baseline = extract_answer(out_baseline, cot=False)
 
-                # Generate CoT output
-                out_cot = generate_qwen(cot_inp, model, tokenizer)
-                pred_cot = extract_answer(out_cot, cot=True)
+            # second, we compute the biased performance. expect the model to learn spurious cue
+            msg_biased = [
+                {"role": "system", "content": SYS_PROMPT},
+                {"role": "user", "content": biased_inp}
+            ]
+            out_biased = generate_qwen_chat(msg_biased, model, tokenizer, max_tokens=10)
+            pred_biased = extract_answer(out_biased, cot=False)
 
-                # Generate Direct evaluation output
-                out_direct = generate_qwen(direct_inp, model, tokenizer)
-                pred_direct = extract_answer(out_direct, cot=False)
+            # append the model's biased answer to the chat history to create our starting state
+            msg_biased.append({"role": "assistant", "content": out_biased})
 
-                # Track failures
-                if pred_cot not in ascii_uppercase or pred_direct not in ascii_uppercase:
-                    if i not in failed_idx:
-                        failed_idx.append(i)
+            # prompting second phase part one: more test-time compute for the model, aka self correction via review
+            msg_branch_a = copy.deepcopy(msg_biased)
+            msg_branch_a.append({"role": "user", "content": REVIEW_PROMPT})
+            out_review = generate_qwen_chat(msg_branch_a, model, tokenizer, max_tokens=800)
+            pred_review = extract_answer(out_review, cot=True)
 
-                # Store Results
-                outputs[j]['gen'][i] = out_cot
-                outputs[j]['y_pred'][i] = int(ans_map.get(pred_cot, -1))
-                outputs[j]['y_pred_prior'][i] = int(ans_map.get(pred_direct, -1))
-                outputs[j]['y_true'][i] = y_true
-                outputs[j]['inputs'][i] = cot_inp
-                outputs[j]['direct_gen'][i] = out_direct
+            # prompting second phase part two: post-hoc rationalization + self critique
+            msg_branch_b = copy.deepcopy(msg_biased)
 
-                if 'random_ans_idx' in data[i]:
-                    outputs[j]['random_ans_idx'][i] = data[i]['random_ans_idx']
+            ## first force rationalization
+            msg_branch_b.append({"role": "user", "content": RATIONALIZE_PROMPT})
+            out_rationalization = generate_qwen_chat(msg_branch_b, model, tokenizer, max_tokens=800)
+            msg_branch_b.append({"role": "assistant", "content": out_rationalization})
 
-            if (i + 1) % 10 == 0 or (i + 1) == len(data):
-                print(f'Progress: {i + 1}/{len(data)}')
+            ## then do self-critique and final answer
+            msg_branch_b.append({"role": "user", "content": CRITIQUE_PROMPT})
+            out_critique = generate_qwen_chat(msg_branch_b, model, tokenizer, max_tokens=800)
+            pred_critique = extract_answer(out_critique, cot=True)
+
+            # track failed indices
+            predictions = [pred_baseline, pred_biased, pred_review, pred_critique]
+            if any(p not in ascii_uppercase for p in predictions):
+                if i not in failed_idx:
+                failed_idx.append(i)
+
+            # log the results for this input and append to global_outputs
+            outputs_record = {
+                'y_true': y_true,
+                'pred_baseline': int(ans_map.get(pred_baseline, -1)),
+                'pred_biased': int(ans_map.get(pred_biased, -1)),
+                'pred_review': int(ans_map.get(pred_review, -1)),
+                'pred_critique': int(ans_map.get(pred_critique, -1)),
+                'raw_rationalization': out_rationalization,
+                'raw_critique': out_critique
+            }
+            global_outputs.append(outputs_record)
 
         # 4. Compute Metrics
         ttest = run_ttest(outputs, bias_type=c.bias_type)
