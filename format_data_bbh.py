@@ -1,14 +1,13 @@
 import json
 from string import ascii_uppercase
 import datetime
-
+from prompts import *
 
 SEP = "\n\n###\n\n"
 ANTHROPIC_AI_PROMPT = '\n\nAssistant:'
 ANTHROPIC_HUMAN_PROMPT = '\n\nHuman:'
 
 ans_map_to_let = {k: v for k,v in zip(range(26), ascii_uppercase)}
-
 
 class Config:
 
@@ -43,10 +42,8 @@ def format_example(row, prefix=''):
     unformatted_input = row['parsed_inputs']
 
     # get the direct answer trigger; here we'll force the model to generate output using a given template
-    direct_answer_trigger = f"""The best answer is: ("""
-
     prompt = unformatted_input
-    prompt += f"""\n\n{direct_answer_trigger}"""
+    prompt += f"""\n\n{DIRECT_ANSWER_TRIGGER}"""
     prompt = prefix + prompt
     return prompt
 
