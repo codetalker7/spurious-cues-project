@@ -90,7 +90,7 @@ def format_example_pairs(data, c):
     baseline_inputs = [
         format_example(row, prefix=prefix2) for row in data]
 
-    return formatted_prompts_0, formatted_prompts_1, formatted_prompts_0_no_cot, formatted_prompts_1_no_cot
+    return biased_inputs, baseline_inputs
 
 if __name__ == '__main__':
     c = Config('ruin_names', few_shot = True, bias_type = 'ans_always_a', model = 'gpt')
