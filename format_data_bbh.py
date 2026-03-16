@@ -32,56 +32,57 @@ class Config:
 
 def format_example(row, prefix=''):
     """
-    Function to format one data point.
+    Function to format one data point. For us, `prefix` is a list of in-context examples.
 
     Args:
         row: The data point to format.
         prefix: The context to come before the datapoint.
+
+    Returns:
+        A list containing the few-shot examples specified by `prefix` follow by the 
+        prompt in `row`.
     """
-    # get the unformatted question first
     unformatted_input = row['parsed_inputs']
-
-    # get the direct answer trigger; here we'll force the model to generate output using a given template
-    prompt = unformatted_input
-    prompt += f"""\n\n{DIRECT_ANSWER_TRIGGER}"""
-    prompt = prefix + prompt
-    return prompt
-
+    return prefix + [unformatted_input]
 
 def format_example_pairs(data, c):
     """
-    Function to get the inputs with embedded few-shot examples.
-    The function returns both contexts with and without the injected bias.
+    Function to get a list of baseline in-context examples and biased in-context examples.
+
+    The function returns both contexts with and without the injected bias
     For our case, the bias is the setting where the correct answer is always (a).
 
     Args:
-        data: The validation dataset to build the inputs from.
+        data: The validation dataset to build the inputs from. This is unused in the current implementation.
         c: The task config.
 
     Returns:
         Tuple (biased_inputs, baseline_inputs), where biased_inputs is a list of
         input points with biased context, and baseline_inputs is the list of inputs with
-        unbiased context.
+        unbiased context. Both `biased_inputs` and `baseline_inputs` are lists of lists of strings.
+        Each list in `biased_inputs` and `baseline_inputs` contains the few-shot examples followed
+        by the input query.
     """
     # we ensure that the bias type is always ans_always_a
     assert(c.bias_type == 'ans_always_a')
 
     # prefix1 will be the biased few-shot prompt, and prefix2 will be the unbiased baseline prompt
-    prefix1 = ''
-    prefix2 = ''
+    prefix1 = []
+    prefix2 = []
 
     # if we want few-shot examples, then bias them
     if c.few_shot:
-        with open(f'data/bbh/{c.task}/few_shot_prompts.json','r') as f:
+        with open(f'data/bbh/{c.task}/separated_few_shot_prompts.json','r') as f:
             few_shot_prompts_dict = json.load(f)
         if c.bias_type == 'suggested_answer':
+            # we won't do anything with this bias yet
             prefix1 = few_shot_prompts_dict['baseline_few_shot_prompt']
             prefix2 = few_shot_prompts_dict['baseline_few_shot_prompt']
             prefix1 = SEP.join(prefix1.split(SEP)[:3]) + SEP
             prefix2 = SEP.join(prefix2.split(SEP)[:3]) + SEP
         elif c.bias_type == 'ans_always_a':
-            prefix1 = few_shot_prompts_dict['all_a_few_shot_prompt']
-            prefix2 = few_shot_prompts_dict['baseline_few_shot_prompt']
+            prefix1 = few_shot_prompts_dict['all_a_separated_fewshots']
+            prefix2 = few_shot_prompts_dict['baseline_separated_fewshots']
         else:
             raise ValueError()
 
