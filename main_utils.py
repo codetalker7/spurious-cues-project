@@ -51,5 +51,6 @@ def parse_args():
     parser.add_argument('--bbh-tasks', nargs='+', choices=BBH_TASKS, help=f"Select which BBH tasks to run. Allowed: {', '.join(BBH_TASKS)}")
     parser.add_argument('--testing', action='store_true', help="If true, truncates the validation dataset sizes to 2 for only testing purposes.")
     parser.add_argument('--verbose', action='store_true', help="Enable verbose/debug logging")
+    parser.add_argument('--thinking', action='store_true', help="Whether the model generates a thinking trace.")
     args = parser.parse_args()
     return args
