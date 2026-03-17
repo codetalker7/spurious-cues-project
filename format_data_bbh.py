@@ -43,7 +43,7 @@ def format_example(row, prefix=''):
         prompt in `row`.
     """
     unformatted_input = row['parsed_inputs']
-    return prefix + [unformatted_input]
+    return prefix + [{"role": "user", "content": unformatted_input}]
 
 def format_example_pairs(data, c):
     """

@@ -48,9 +48,13 @@ def run_ttest(outputs, bias_type):
         return traceback.format_exc()
 
 # generate outputs using the prompts
-def generate_qwen_chat(messages, model, tokenizer, max_tokens=800):
+def generate_qwen_chat(messages, model, tokenizer, answer_trigger = '', max_tokens=800):
     """Generates a response given a full conversation history."""
+    # first tokenize in the standard way
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+    # then add any triggers; for example, answer_trigger could be the direct answer trigger
+    text += answer_trigger
     inputs = tokenizer([text], return_tensors="pt").to(model.device)
     
     with torch.no_grad():
@@ -61,5 +65,6 @@ def generate_qwen_chat(messages, model, tokenizer, max_tokens=800):
             do_sample=True
         )
     
+    # only return the generated tokens
     generated_ids = outputs[0][inputs.input_ids.shape[1]:]
     return tokenizer.decode(generated_ids, skip_special_tokens=True)
