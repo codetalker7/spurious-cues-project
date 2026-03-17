@@ -38,10 +38,35 @@ if __name__ == '__main__':
         suffix_to_clean = "\n\n###"
         baseline_separated_fewshots =  [ex.rstrip(suffix_to_clean) for ex in baseline_separated_fewshots]
         all_a_separated_fewshots =  [ex.rstrip(suffix_to_clean) for ex in all_a_separated_fewshots]
+        assert(len(baseline_separated_fewshots) == len(all_a_separated_fewshots))
+
+        # separate the question and answer in each example
+        answer_splitter = "\n\nLet's think step by step:"
+        cot_prefix = "Let's think step by step:\n"
+        baseline_separated_fewshots_chat = []
+        all_a_separated_fewshots_chat = []   
+        for idx in range(len(baseline_separated_fewshots)):
+            # first process the baseline example
+            prompt = baseline_separated_fewshots[idx]
+            question, answer = prompt.split(answer_splitter, 1)
+            answer  = cot_prefix + answer
+            baseline_separated_fewshots_chat.append({"role": "user", "content": question})
+            baseline_separated_fewshots_chat.append({"role": "assistant", "content": answer})
+
+            # next, process the biased example
+            prompt = all_a_separated_fewshots[idx]
+            question, answer = prompt.split(answer_splitter, 1)
+            answer  = cot_prefix + answer
+            all_a_separated_fewshots_chat.append({"role": "user", "content": question})
+            all_a_separated_fewshots_chat.append({"role": "assistant", "content": answer})
+
+        # sanity checks
+        assert(len(baseline_separated_fewshots_chat) == len(all_a_separated_fewshots_chat))
+        assert(len(baseline_separated_fewshots_chat) == 2 * len(baseline_separated_fewshots))
 
         to_save = {
-            "baseline_separated_fewshots": baseline_separated_fewshots,
-            "all_a_separated_fewshots": all_a_separated_fewshots
+            "baseline_separated_fewshots": baseline_separated_fewshots_chat,
+            "all_a_separated_fewshots": all_a_separated_fewshots_chat 
         }
 
         with open(f'{task}/separated_few_shot_prompts.json', 'w', encoding='utf-8') as f:
