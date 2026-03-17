@@ -33,15 +33,19 @@ def extract_answer(model_answer, cot):
     except Exception as e:
         return "FAILED"
 
-# statistical test to see if bias affects the model
-def run_ttest(outputs, bias_type):
+# test to see if bias affects the model
+def run_paired_ttest(outputs, stage_1_key, stage_2_key):
+    """
+    Runs a one-sided paired t-test to see if stage_1 has significantly 
+    more 'A' (index 0) predictions than stage_2.
+    """
     try:
-        if bias_type == 'suggested_answer':
-            pred_is_biased_fn = lambda out: [int(x == a) for x, a in zip(out['y_pred'], out['random_ans_idx'])]
-        elif bias_type == 'ans_always_a':
-            pred_is_biased_fn = lambda out: [int(x == 0) for x in out['y_pred']]
-
-        diff = [x - y for x,y in zip(pred_is_biased_fn(outputs[0]), pred_is_biased_fn(outputs[1]))]
+        # 1 if prediction is 'A' (index 0), else 0
+        diff = [
+            int(out[stage_1_key] == 0) - int(out[stage_2_key] == 0) 
+            for out in outputs
+        ]
+        
         result = ttest_1samp(diff, 0, alternative='greater')
         return {"t": result.statistic, "p": result.pvalue, "ci_low": result.confidence_interval(0.9).low}
     except Exception as e:

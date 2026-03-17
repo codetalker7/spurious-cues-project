@@ -1,17 +1,22 @@
 # script motivated from run_eval.py of cot-unfaithfulness
 import json
 import os
+import argparse
+import numpy as np
+import logging
 import copy
 import torch
+import transformers
 import traceback
 from time import time
 from string import ascii_uppercase
 from collections import defaultdict
 from scipy.stats import ttest_1samp
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import random
 
 from format_data_bbh import format_example_pairs, Config
-from utils import load_model, extract_answer, run_ttest, generate_qwen_chat
+from utils import load_model, extract_answer, run_paired_ttest, generate_qwen_chat
 from prompts import *
 
 # test if cuda is working fine
@@ -22,24 +27,35 @@ assert(torch.cuda.is_available())
 %autoreload 2
 import pdb
 
-# --- CONFIGURATION ---
-MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct" # Change to 1.5B or 3B if needed
-TESTING = True # Set to True to only run 5 examples per task
+# GLOBALS
 MAX_NEW_TOKENS = 800
 
+# import logging, argparsing and random seed utils
+from main_utils import *
+
 if __name__ == '__main__':
-    model, tokenizer = load_model(MODEL_NAME)
+    # process args
+    args = parse_args()
+    setup_logger(args.verbose)
+    random_seeds(args.seed)
+
+    # logging some initial details
+    logging.info(f"Model name: {args.model_name}")
+    logging.info(f"BBH Tasks: {args.bbh_tasks}")
+    exit(0)
+
+    model, tokenizer = load_model(args.model_name)
     ans_map = {k: v for k, v in zip(ascii_uppercase, range(26))}
     configs = []
 
     # Build BBH task configurations
     # for now, we only focus on the bias type where answer is always part a
-    for task in ['sports_understanding', 'snarks']: # Add more BBH tasks here
+    for task in args.bbh_tasks: # Add more BBH tasks here
         configs.append(
             Config(task,
                    bias_type='ans_always_a',
                    few_shot=True,
-                   model=MODEL_NAME.split('/')[-1],
+                   model=args.model_name.split('/')[-1],
                    get_pre_cot_answer=True)
         )
 
@@ -146,3 +162,13 @@ if __name__ == '__main__':
             }, f)
 
     print('Finished in', round(time() - first_start), 'seconds')
+
+"""
+Using command line args in IPython
+
+```
+import sys
+sys.argv = ['--model-name=Qwen/Qwen2.5-1.5B-Instruct', '--bbh-tasks', 'sports_understanding', 'snarks', '--testing', '--verbose']
+```
+
+"""
