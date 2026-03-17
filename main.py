@@ -1,6 +1,7 @@
 # script motivated from run_eval.py of cot-unfaithfulness
 import json
 import os
+import copy
 import torch
 import traceback
 from time import time
@@ -49,16 +50,15 @@ if __name__ == '__main__':
         fname = c.fname if hasattr(c,'fname') else str(c) + '.json'
         print(f'\n\n--- Running Config: {c.task} | Few-shot: {c.few_shot} ---')
 
-        # loading the dataset; prune it if just testing 
+        # loading the dataset; prune it if just testing
         with open(f'data/bbh/{c.task}/val_data.json','r') as f:
             data = json.load(f)['data']
         if TESTING:
             data = data[:5]
         # the unformatted input point in each row of the dataset is stored in "parsed_input"
 
-        # getting the biased and unbiased context inputs 
+        # getting the biased and unbiased context inputs
         biased_inputs, baseline_inputs = format_example_pairs(data, c)
-        outputs = [defaultdict(lambda: [None for _ in range(len(data))]), defaultdict(lambda: [None for _ in range(len(data))])]
 
         # list to keep track of failed indices and outputs
         failed_idx = []
@@ -71,42 +71,38 @@ if __name__ == '__main__':
             baseline_input = baseline_inputs[i]
             biased_input = biased_inputs[i]
 
-            # first, get the baseline performance; note that DIRECT_ANSWER_TRIGGER is implicitly used here
+            # first, get the baseline performance; use the DIRECT_ANSWER_TRIGGER here
             msg_baseline = [
                 {"role": "system", "content": SYS_PROMPT},
-                {"role": "user", "content": baseline_inp}
             ]
-            out_baseline = generate_qwen_chat(msg_baseline, model, tokenizer, max_tokens=10)
+            msg_baseline += baseline_input
+            full_history_baseline, out_baseline = generate_qwen_chat(msg_baseline, model, tokenizer, answer_trigger=DIRECT_ANSWER_TRIGGER, max_tokens=10)
             pred_baseline = extract_answer(out_baseline, cot=False)
 
             # second, we compute the biased performance. expect the model to learn spurious cue
             msg_biased = [
                 {"role": "system", "content": SYS_PROMPT},
-                {"role": "user", "content": biased_inp}
             ]
-            out_biased = generate_qwen_chat(msg_biased, model, tokenizer, max_tokens=10)
+            msg_biased += biased_input
+            full_history_biased, out_biased = generate_qwen_chat(msg_biased, model, tokenizer, answer_trigger=DIRECT_ANSWER_TRIGGER, max_tokens=10)
             pred_biased = extract_answer(out_biased, cot=False)
 
-            # append the model's biased answer to the chat history to create our starting state
-            msg_biased.append({"role": "assistant", "content": out_biased})
-
             # prompting second phase part one: more test-time compute for the model, aka self correction via review
-            msg_branch_a = copy.deepcopy(msg_biased)
+            msg_branch_a = copy.deepcopy(full_history_biased)
             msg_branch_a.append({"role": "user", "content": REVIEW_PROMPT})
-            out_review = generate_qwen_chat(msg_branch_a, model, tokenizer, max_tokens=800)
+            full_history_review, out_review = generate_qwen_chat(msg_branch_a, model, tokenizer, max_tokens=800)
             pred_review = extract_answer(out_review, cot=True)
 
             # prompting second phase part two: post-hoc rationalization + self critique
-            msg_branch_b = copy.deepcopy(msg_biased)
+            msg_branch_b = copy.deepcopy(full_history_biased)
 
             ## first force rationalization
             msg_branch_b.append({"role": "user", "content": RATIONALIZE_PROMPT})
-            out_rationalization = generate_qwen_chat(msg_branch_b, model, tokenizer, max_tokens=800)
-            msg_branch_b.append({"role": "assistant", "content": out_rationalization})
+            msg_branch_b, out_rationalization = generate_qwen_chat(msg_branch_b, model, tokenizer, max_tokens=800)
 
             ## then do self-critique and final answer
             msg_branch_b.append({"role": "user", "content": CRITIQUE_PROMPT})
-            out_critique = generate_qwen_chat(msg_branch_b, model, tokenizer, max_tokens=800)
+            msg_branch_b, out_critique = generate_qwen_chat(msg_branch_b, model, tokenizer, max_tokens=800)
             pred_critique = extract_answer(out_critique, cot=True)
 
             # track failed indices
