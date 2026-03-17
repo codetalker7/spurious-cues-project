@@ -23,9 +23,11 @@ from prompts import *
 assert(torch.cuda.is_available())
 
 # for ipython; reload modules on change and debugging stuff
-%load_ext autoreload
-%autoreload 2
-import pdb
+if __IPYTHON__:
+    print("Inside IPython REPL....")
+    %load_ext autoreload
+    %autoreload 2
+    import pdb
 
 # GLOBALS
 MAX_NEW_TOKENS = 800
