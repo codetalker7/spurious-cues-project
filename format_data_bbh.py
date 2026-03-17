@@ -24,7 +24,7 @@ class Config:
     def __str__(self):
         base_str = self.time + "-" + self.task + "-" + self.model
         for k, v in sorted(self.__dict__.items()):
-            if k == "time" or k == "task" or k == "model" or k == "bias_text":
+            if k in ["time", "task", "model", "bias_text", "anthropic_model", "few_shot", "get_pre_cot_answer"]:
                 continue
             base_str = base_str + "-" + k.replace("_", "") + str(v).replace("-", "").replace('.json','')
         return base_str
