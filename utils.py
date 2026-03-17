@@ -65,6 +65,12 @@ def generate_qwen_chat(messages, model, tokenizer, answer_trigger = '', max_toke
             do_sample=True
         )
     
-    # only return the generated tokens
+    # get the generated tokens (not including the answer trigger)
     generated_ids = outputs[0][inputs.input_ids.shape[1]:]
-    return tokenizer.decode(generated_ids, skip_special_tokens=True)
+    generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+
+    # now compute the full generated text
+    full_text_response = answer_trigger + generated_text
+
+    # return both the full history and the generated text
+    return messages + [{"role": "assistant", "content": full_text_response}], generated_text
