@@ -46,7 +46,12 @@ if __name__ == '__main__':
     logging.info(f"Model name: {args.model_name}")
     logging.info(f"BBH Tasks: {args.bbh_tasks}")
 
+    # loading the model
+    logging.info(f"Loading model and tokenizer: {args.model_name}")
     model, tokenizer = load_model(args.model_name)
+    logging.info("Model and tokenizer successfully loaded")
+
+    # ans_map and configs
     ans_map = {k: v for k, v in zip(ascii_uppercase, range(26))}
     configs = []
 
