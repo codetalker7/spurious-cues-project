@@ -30,9 +30,10 @@ mkdir -p experiments
 echo "Starting evaluation at $(date)"
 
 python main.py \
-    --model-name "Qwen/Qwen3-1.7B" \
+    --model-name "Qwen/Qwen3-8B" \
     --bbh-tasks causal_judgment date_understanding disambiguation_qa hyperbaton logical_deduction_five_objects movie_recommendation navigate ruin_names snarks sports_understanding temporal_sequences tracking_shuffled_objects_three_objects web_of_lies \
     --verbose \
     --thinking \
 
 echo "Evaluation finished at $(date)"
+

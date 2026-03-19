@@ -26,6 +26,9 @@ cd $SCRDIR
 mkdir -p logs
 mkdir -p experiments
 
+# monitoring the gpu
+/uufs/chpc.utah.edu/sys/installdir/chpcscripts/gpu/gpu-monitor.sh &
+
 # start the execution
 echo "Starting evaluation at $(date)"
 
