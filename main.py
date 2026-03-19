@@ -1,4 +1,11 @@
 # script motivated from run_eval.py of cot-unfaithfulness
+# for ipython; reload modules on change and debugging stuff
+# if __IPYTHON__:
+    # print("Inside IPython REPL....")
+    # %load_ext autoreload
+    # %autoreload 2
+    # import pdb
+
 import json
 import os
 import re
@@ -22,13 +29,6 @@ from prompts import *
 
 # test if cuda is working fine
 assert(torch.cuda.is_available())
-
-# for ipython; reload modules on change and debugging stuff
-# if __IPYTHON__:
-#     print("Inside IPython REPL....")
-#     %load_ext autoreload
-#     %autoreload 2
-#     import pdb
 
 # GLOBALS
 MAX_NEW_TOKENS = 5000
@@ -101,8 +101,9 @@ if __name__ == '__main__':
                     failed_idx = saved_state.get('failed_idx', [])
                     # Extract the original indices we've already successfully processed
                     processed_indices = {record.get('original_index') for record in global_outputs if 'original_index' in record}
+                    logging.info(f"Loaded processed indices from {output_file_path}. Will continue evaluation from index {max(processed_indices) + 1}")
             except json.JSONDecodeError:
-                print("Warning: Save file corrupted. Starting task from scratch.")
+                logging.warning("Warning: Save file corrupted. Starting task from scratch.")
 
         # sequential evaluation; no need to use threadpools here
         for i in range(len(data)):
@@ -133,35 +134,26 @@ if __name__ == '__main__':
             pred_biased = extract_answer(out_biased, cot=False)
 
             # prompting second phase part one: more test-time compute for the model, aka self correction via review
-            msg_branch_a = copy.deepcopy(full_history_biased)
-            msg_branch_a.append({"role": "user", "content": REVIEW_PROMPT})
-            full_history_review, out_review = generate_qwen_chat(msg_branch_a, model, tokenizer, max_tokens=MAX_NEW_TOKENS)
-            if args.thinking:
-                # strip the thinking trace
-                model_final_output = re.sub(r'<think>.*?</think>', '', out_review, flags=re.DOTALL)
-                pred_review = extract_answer(model_final_output, cot=True)
-            else:
-                pred_review = extract_answer(out_review, cot=True)
+            full_history_review = copy.deepcopy(full_history_biased)
+            full_history_review.append({"role": "user", "content": REVIEW_PROMPT})
+            full_history_review, out_review = generate_qwen_chat(full_history_review, model, tokenizer, max_tokens=MAX_NEW_TOKENS)
+            full_history_review.append({"role": "user", "content": REVIEW_FINAL_ANSWER})
+            full_history_review, out_review_final_answer = generate_qwen_chat(full_history_review, model, tokenizer, answer_trigger=DIRECT_ANSWER_TRIGGER, max_tokens=2)
+            pred_review = extract_answer(out_review_final_answer, cot=False) 
 
             # prompting second phase part two: post-hoc rationalization + self critique
-            msg_branch_b = copy.deepcopy(full_history_biased)
+            full_history_rationalization = copy.deepcopy(full_history_biased)
 
             ## first force rationalization
-            msg_branch_b.append({"role": "user", "content": RATIONALIZE_PROMPT})
-            msg_branch_b, out_rationalization = generate_qwen_chat(msg_branch_b, model, tokenizer, max_tokens=MAX_NEW_TOKENS)
-            if args.thinking:
-                # strip the thinking trace
-                out_rationalization = re.sub(r'<think>.*?</think>', '', out_rationalization, flags=re.DOTALL)
-                msg_branch_b[-1]["content"] = out_rationalization
+            full_history_rationalization.append({"role": "user", "content": RATIONALIZE_PROMPT})
+            full_history_rationalization, out_rationalization = generate_qwen_chat(full_history_rationalization, model, tokenizer, max_tokens=MAX_NEW_TOKENS)
 
             ## then do self-critique and final answer
-            msg_branch_b.append({"role": "user", "content": CRITIQUE_PROMPT})
-            msg_branch_b, out_critique = generate_qwen_chat(msg_branch_b, model, tokenizer, max_tokens=MAX_NEW_TOKENS)
-            if args.thinking:             
-                out_critique = re.sub(r'<think>.*?</think>', '', out_critique, flags=re.DOTALL)
-                pred_critique = extract_answer(out_critique, cot=True)
-            else: 
-                pred_critique = extract_answer(out_critique, cot=True)
+            full_history_rationalization.append({"role": "user", "content": CRITIQUE_PROMPT})
+            full_history_rationalization, out_critique = generate_qwen_chat(full_history_rationalization, model, tokenizer, max_tokens=MAX_NEW_TOKENS)
+            full_history_rationalization.append({"role": "user", "content": CRITIQUE_FINAL_ANSWER})
+            full_history_rationalization, out_critique_final_answer = generate_qwen_chat(full_history_rationalization, model, tokenizer, answer_trigger=DIRECT_ANSWER_TRIGGER, max_tokens=2)
+            pred_critique = extract_answer(out_critique_final_answer, cot=False)
 
             # track failed indices
             predictions = [pred_baseline, pred_biased, pred_review, pred_critique]
@@ -177,8 +169,13 @@ if __name__ == '__main__':
                 'pred_biased': int(ans_map.get(pred_biased, -1)),
                 'pred_review': int(ans_map.get(pred_review, -1)),
                 'pred_critique': int(ans_map.get(pred_critique, -1)),
+                'raw_baseline': out_baseline,
+                'raw_biased': out_biased, 
+                'raw_review': out_review,
+                'raw_review_final_answer': out_review_final_answer,
                 'raw_rationalization': out_rationalization,
-                'raw_critique': out_critique
+                'raw_critique': out_critique,
+                'raw_critique_final_answer': out_critique_final_answer
             }
             global_outputs.append(outputs_record)
 

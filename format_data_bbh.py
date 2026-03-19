@@ -22,7 +22,7 @@ class Config:
 
 
     def __str__(self):
-        base_str = self.time + "-" + self.task + "-" + self.model
+        base_str = self.task + "-" + self.model
         for k, v in sorted(self.__dict__.items()):
             if k in ["time", "task", "model", "bias_text", "anthropic_model", "few_shot", "get_pre_cot_answer"]:
                 continue
