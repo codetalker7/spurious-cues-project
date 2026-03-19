@@ -4,6 +4,7 @@ import transformers
 import random
 import numpy as np
 import logging
+import transformers
 
 BBH_TASKS = [
     'causal_judgment',
@@ -43,6 +44,10 @@ def setup_logger(verbose):
         format="%(asctime)s | %(levelname)-8s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
     )
+
+    # turn off huggingface logging
+    transformers.logging.set_verbosity_warning()
+        
 
 def parse_args():
     parser = argparse.ArgumentParser()

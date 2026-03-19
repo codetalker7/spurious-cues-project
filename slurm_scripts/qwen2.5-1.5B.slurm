@@ -7,8 +7,11 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --output=logs/qwen3-1.7B_thinking_generations-%j.out
-#SBATCH --error=logs/qwen3-1.7B_thinking_generations-%j.err
+#SBATCH --output=logs/qwen2.5-1.5B_generations-%j.out
+#SBATCH --error=logs/qwen2.5-1.5B_generations-%j.err
+
+# clear any loaded modules
+module purge
 
 # load required modules
 module load miniforge3
@@ -27,9 +30,8 @@ mkdir -p experiments
 echo "Starting evaluation at $(date)"
 
 python main.py \
-    --model-name "Qwen/Qwen3-1.7B" \
+    --model-name "Qwen/Qwen2.5-1.5B-Instruct" \
     --bbh-tasks causal_judgment date_understanding disambiguation_qa hyperbaton logical_deduction_five_objects movie_recommendation navigate ruin_names snarks sports_understanding temporal_sequences tracking_shuffled_objects_three_objects web_of_lies \
     --verbose \
-    --thinking \
 
 echo "Evaluation finished at $(date)"
