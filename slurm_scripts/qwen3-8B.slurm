@@ -7,8 +7,8 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --output=logs/qwen3-1.7B_thinking_generations-%j.out
-#SBATCH --error=logs/qwen3-1.7B_thinking_generations-%j.err
+#SBATCH --output=logs/qwen3-8B_thinking_generations-%j.out
+#SBATCH --error=logs/qwen3-8B_thinking_generations-%j.err
 
 # load required modules
 module load miniforge3
