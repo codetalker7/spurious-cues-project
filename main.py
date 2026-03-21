@@ -109,7 +109,7 @@ if __name__ == '__main__':
         for i in range(len(data)):
             # skip if already processed
             if i in processed_indices:
-                print(f"Skipping index {i} (already processed)")
+                logging.info(f"Skipping index {i} (already processed)")
                 continue
 
             # get the true label (i.e the true correct answer option) and the inputs
@@ -196,6 +196,7 @@ Using command line args in IPython
 ```
 import sys
 sys.argv = ['dummy_script_name', '--model-name', 'Qwen/Qwen3-1.7B', '--bbh-tasks', 'sports_understanding', 'snarks', '--testing', '--verbose', '--thinking']
+sys.argv = ['dummy_script_name', '--model-name', 'allenai/Olmo-3-7B-Instruct', '--bbh-tasks', 'sports_understanding', 'snarks', '--testing', '--verbose', '--thinking']
 ```
 
 """
