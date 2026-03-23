@@ -1,3 +1,7 @@
 .vim-arsync
 slurm_details.md
 __pycache__
+*.gpulog
+evals/
+experiments/
+logs/

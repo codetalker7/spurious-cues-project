@@ -2,7 +2,6 @@ import json
 import os
 import glob
 import logging
-import numpy as np
 import argparse
 
 def parse_args():
