@@ -6,6 +6,11 @@ import torch
 # loading the model
 def load_model(model_name):
     print(f"Loading {model_name}...")
+    # for phi - 3 model, add below lines
+    # config = AutoConfig.from_pretrained(model_name)
+    # if config.rope_scaling is None:
+    #    config.rope_scaling = {"type": "linear", "factor": 1.0}  # avoids the crash
+    
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
