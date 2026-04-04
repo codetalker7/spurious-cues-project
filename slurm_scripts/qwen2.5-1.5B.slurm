@@ -37,4 +37,8 @@ python main.py \
     --bbh-tasks causal_judgment date_understanding disambiguation_qa hyperbaton logical_deduction_five_objects movie_recommendation navigate ruin_names snarks sports_understanding temporal_sequences tracking_shuffled_objects_three_objects web_of_lies \
     --verbose \
 
+python analyse_logit_lens.py \
+    --experiment-file experiments/your_file.json
+
+
 echo "Evaluation finished at $(date)"
