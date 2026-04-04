@@ -3,6 +3,155 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 
+
+def get_logit_lens(messages, model, tokenizer, answer_trigger='', answer_options=['A','B','C','D']):
+    """
+    For every transformer layer, project the hidden state at the last token
+    back to vocabulary space and return probabilities for A/B/C/D.
+    
+    Returns:
+        np.array of shape (num_layers, 4)
+        columns = probabilities for A, B, C, D at each layer
+    """
+    # build prompt exactly like generate_qwen_chat does
+    text = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    text += answer_trigger
+    inputs = tokenizer([text], return_tensors="pt").to(model.device)
+
+    # get token ids for A B C D
+    option_ids = [
+        tokenizer.encode(opt, add_special_tokens=False)[0]
+        for opt in answer_options
+    ]
+
+    # forward pass — ask for ALL hidden states
+    with torch.no_grad():
+        outputs = model(
+            **inputs,
+            output_hidden_states=True   # ← this is the key flag
+        )
+
+    # outputs.hidden_states is a tuple of tensors
+    # one per layer, shape: (1, seq_len, d_model)
+    hidden_states = outputs.hidden_states
+
+    # unembedding matrix = final linear layer that maps d_model → vocab
+    unembedding = model.lm_head.weight  # shape: (vocab_size, d_model)
+
+    # final layer norm of the model
+    # needed before unembedding — without this the projections are noisy
+    final_norm = model.model.norm
+
+    probs_per_layer = []
+
+    for hs in hidden_states:
+        # hidden state at last token position
+        h = hs[0, -1, :]                          # shape: (d_model,)
+
+        # apply layer norm
+        h_normed = final_norm(h.unsqueeze(0))      # shape: (1, d_model)
+        h_normed = h_normed.squeeze(0)             # shape: (d_model,)
+
+        # project to vocabulary
+        logits = unembedding @ h_normed            # shape: (vocab_size,)
+
+        # softmax to get probabilities
+        probs = torch.nn.functional.softmax(logits, dim=-1)
+
+        # extract only A B C D
+        option_probs = [probs[tok_id].item() for tok_id in option_ids]
+        probs_per_layer.append(option_probs)
+
+    return np.array(probs_per_layer)   # shape: (num_layers+1, 4)
+
+def plot_logit_lens(probs_p1, probs_p2b, true_answer, task_name='', idx=0):
+    """
+    Plot logit lens for Phase 1 vs Phase 2b side by side.
+    
+    probs_p1:    np.array (num_layers, 4)
+    probs_p2b:   np.array (num_layers, 4)
+    true_answer: string e.g. 'B'
+    """
+
+    options    = ['A', 'B', 'C', 'D']
+    true_idx   = options.index(true_answer)
+    num_layers = probs_p1.shape[0]
+    layers     = list(range(num_layers))
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle(
+        f"Logit Lens | task: {task_name} | example: {idx} | correct: ({true_answer})",
+        fontsize=12
+    )
+
+    for ax, probs, title in zip(
+        axes,
+        [probs_p1, probs_p2b],
+        ['Phase 1 — biased prompt', 'Phase 2b — after self-critique']
+    ):
+        for i, opt in enumerate(options):
+            # make correct answer green, A red, others gray
+            if opt == true_answer:
+                color, lw, alpha = 'green', 2.5, 1.0
+            elif opt == 'A':
+                color, lw, alpha = 'red',   2.5, 1.0
+            else:
+                color, lw, alpha = 'gray',  1.0, 0.3
+
+            ax.plot(layers, probs[:, i],
+                    label=f'({opt})',
+                    color=color,
+                    linewidth=lw,
+                    alpha=alpha)
+
+        # mark flip layer — first layer where correct answer becomes top prediction
+        predicted_per_layer = probs.argmax(axis=1)
+        flip_layer = next(
+            (l for l, p in enumerate(predicted_per_layer) if p == true_idx),
+            None
+        )
+        if flip_layer is not None:
+            ax.axvline(flip_layer, color='blue', linestyle='--', linewidth=1)
+            ax.text(flip_layer + 0.3, 0.9,
+                    f'flips at layer {flip_layer}',
+                    fontsize=9, color='blue')
+
+        ax.set_xlabel('Layer')
+        ax.set_ylabel('Probability')
+        ax.set_title(title)
+        ax.legend(fontsize=9)
+        ax.set_ylim([0, 1])
+        ax.grid(True, alpha=0.2)
+
+    plt.tight_layout()
+    os.makedirs('figures', exist_ok=True)
+    plt.savefig(f'figures/logit_lens_{task_name}_{idx}.png', dpi=150)
+    plt.close()
+
+# loading the model
+def load_model(model_name):
+
+    config = AutoConfig.from_pretrained(model_name)
+    if config.rope_scaling is None:
+        config.rope_scaling = {"type": "none"}  # avoids the crash
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True).to(torch.float16).to("cuda")
+
+#     tokenizer = AutoTokenizer.from_pretrained(model_name,trust_remote_code=True
+# )
+#     model = AutoModelForCausalLM.from_pretrained(
+#         model_name,
+#         trust_remote_code=True,
+#         torch_dtype=torch.float16,
+#         device_map="auto"
+#     )
+    return model, tokenizer
+
+
+
 # loading the model
 def load_model(model_name):
     print(f"Loading {model_name}...")
