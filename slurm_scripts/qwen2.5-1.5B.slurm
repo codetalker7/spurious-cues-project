@@ -32,13 +32,18 @@ mkdir -p experiments
 # start the execution
 echo "Starting evaluation at $(date)"
 
-python main.py \
-    --model-name "Qwen/Qwen2.5-1.5B-Instruct" \
-    --bbh-tasks causal_judgment date_understanding disambiguation_qa hyperbaton logical_deduction_five_objects movie_recommendation navigate ruin_names snarks sports_understanding temporal_sequences tracking_shuffled_objects_three_objects web_of_lies \
-    --verbose \
+# python main2.py \
+#     --model-name "Qwen/Qwen2.5-1.5B-Instruct" \
+#     --bbh-tasks navigate \
+#     --verbose \
 
 python analyse_logit_lens.py \
-    --experiment-file experiments/your_file.json
+    --experiment-file "experiments/20260405-022401-navigate-Qwen2.5-1.5B-Instruct-biastypeans_always_a-thinkingFalse.json"
 
+# logit lens analysis (existing)
+python analyse_logit_lens.py --experiment-file "experiments/20260405-022401-navigate-Qwen2.5-1.5B-Instruct-biastypeans_always_a-thinkingFalse.json"
+
+# new: probing + cosine similarity + DLA
+python analyse_representations.py --experiment-file "experiments/20260405-022401-navigate-Qwen2.5-1.5B-Instruct-biastypeans_always_a-thinkingFalse.json"
 
 echo "Evaluation finished at $(date)"
