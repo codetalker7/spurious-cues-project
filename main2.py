@@ -17,7 +17,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import random
 
 from format_data_bbh import format_example_pairs, Config
-from utils import load_model, extract_answer, run_paired_ttest, generate_qwen_chat, get_model_internals, compute_dla, plot_logit_lens
+from utils2 import load_model, extract_answer, run_paired_ttest, generate_qwen_chat, get_model_internals, compute_dla, plot_logit_lens
 from prompts import *
 
 # test if cuda is working fine
