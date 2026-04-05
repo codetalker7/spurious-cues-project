@@ -17,7 +17,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import random
 
 from format_data_bbh import format_example_pairs, Config
-from utils import load_model, extract_answer, run_paired_ttest, generate_qwen_chat, get_logit_lens, plot_logit_lens
+from utils import load_model, extract_answer, run_paired_ttest, generate_qwen_chat, get_model_internals, compute_dla, plot_logit_lens
 from prompts import *
 
 # test if cuda is working fine
@@ -87,7 +87,7 @@ if __name__ == '__main__':
         # the output file path
         output_file_path = f'experiments/{fname}'
 
-        # checpointing system to resume from existing file if it exists
+        # checkpointing system to resume from existing file if it exists
         failed_idx = []
         global_outputs = []
         processed_indices = set()
@@ -99,10 +99,29 @@ if __name__ == '__main__':
                     saved_state = json.load(f)
                     global_outputs = saved_state.get('outputs', [])
                     failed_idx = saved_state.get('failed_idx', [])
-                    # Extract the original indices we've already successfully processed
                     processed_indices = {record.get('original_index') for record in global_outputs if 'original_index' in record}
             except json.JSONDecodeError:
                 print("Warning: Save file corrupted. Starting task from scratch.")
+
+        # parallel npz checkpoint for hidden states and DLA
+        # stored separately because arrays are too large for JSON
+        hs_file_path = output_file_path.replace('.json', '_hs.npz')
+        hs_p1_list, hs_p2b_list, hs_baseline_list = [], [], []
+        dla_p1_list, dla_p2b_list = [], []
+        hs_indices = []
+
+        if os.path.exists(hs_file_path):
+            logging.info(f"Found existing hidden states at {hs_file_path}. Loading...")
+            try:
+                hs_saved = np.load(hs_file_path, allow_pickle=False)
+                hs_p1_list       = list(hs_saved['hs_p1'])
+                hs_p2b_list      = list(hs_saved['hs_p2b'])
+                hs_baseline_list = list(hs_saved['hs_baseline'])
+                dla_p1_list      = list(hs_saved['dla_p1'])
+                dla_p2b_list     = list(hs_saved['dla_p2b'])
+                hs_indices       = list(hs_saved['indices'])
+            except Exception:
+                print("Warning: Hidden states file corrupted. Rebuilding from scratch.")
 
         # sequential evaluation; no need to use threadpools here
         for i in range(len(data)):
@@ -170,22 +189,35 @@ if __name__ == '__main__':
                     failed_idx.append(i)
 
             # log the results for this input and append to global_outputs
-            # ── Logit Lens ──────────────────────────────────────────────
-            # reconstruct Phase 1 message (same as msg_biased)
-            msg_p1_for_lens = [{"role": "system", "content": SYS_PROMPT}] + biased_input
+            # ── Model internals (logit lens + hidden states + DLA) ───────
+            # All three phases use DIRECT_ANSWER_TRIGGER so the last token
+            # is always "(" — the model is about to output the answer letter.
 
-            # reconstruct Phase 2b message (full history up to critique prompt)
-            # msg_branch_b already has everything at this point in the loop
-            msg_p2b_for_lens = msg_branch_b  # this already contains the full history
+            # Phase 1: biased prompt only
+            msg_p1_for_lens      = [{"role": "system", "content": SYS_PROMPT}] + biased_input
+            # Phase 2b: full critique history + final-answer request
+            msg_p2b_for_lens     = msg_branch_b + [{"role": "user", "content": CRITIQUE_FINAL_ANSWER}]
+            # Baseline: unbiased prompt (comparison anchor)
+            msg_baseline_for_lens = [{"role": "system", "content": SYS_PROMPT}] + baseline_input
 
-            # get logit lens arrays
-            probs_p1  = get_logit_lens(
-                msg_p1_for_lens, model, tokenizer,
-                answer_trigger=DIRECT_ANSWER_TRIGGER
-            )
-            probs_p2b = get_logit_lens(
-                msg_p2b_for_lens, model, tokenizer
-            )
+            internals_p1       = get_model_internals(msg_p1_for_lens,       model, tokenizer, answer_trigger=DIRECT_ANSWER_TRIGGER)
+            internals_p2b      = get_model_internals(msg_p2b_for_lens,      model, tokenizer, answer_trigger=DIRECT_ANSWER_TRIGGER)
+            internals_baseline = get_model_internals(msg_baseline_for_lens, model, tokenizer, answer_trigger=DIRECT_ANSWER_TRIGGER)
+
+            probs_p1  = internals_p1['logit_lens']
+            probs_p2b = internals_p2b['logit_lens']
+
+            # DLA: per-layer logit contributions toward each answer option
+            dla_p1  = compute_dla(internals_p1['hidden_states'],       model, tokenizer)
+            dla_p2b = compute_dla(internals_p2b['hidden_states'],      model, tokenizer)
+
+            # accumulate hidden states for probing + cosine similarity (saved to npz)
+            hs_p1_list.append(internals_p1['hidden_states'])
+            hs_p2b_list.append(internals_p2b['hidden_states'])
+            hs_baseline_list.append(internals_baseline['hidden_states'])
+            dla_p1_list.append(dla_p1)
+            dla_p2b_list.append(dla_p2b)
+            hs_indices.append(i)
 
             # get the true answer letter e.g. 'B'
             true_answer_letter = ascii_uppercase[y_true]
@@ -234,6 +266,17 @@ if __name__ == '__main__':
                     'failed_idx': failed_idx,
                     'outputs': global_outputs,
                 }, f, indent=2)
+
+            # save hidden states and DLA to npz (separate from JSON due to size)
+            np.savez(
+                hs_file_path,
+                hs_p1       = np.stack(hs_p1_list),        # (n, num_layers+1, d_model)
+                hs_p2b      = np.stack(hs_p2b_list),
+                hs_baseline = np.stack(hs_baseline_list),
+                dla_p1      = np.stack(dla_p1_list),        # (n, num_layers, 4)
+                dla_p2b     = np.stack(dla_p2b_list),
+                indices     = np.array(hs_indices),         # (n,) original example indices
+            )
 
             logging.info(f"Processed and saved index {i}/{len(data)-1}")
 
