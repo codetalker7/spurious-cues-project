@@ -7,67 +7,107 @@ import matplotlib.pyplot as plt
 import os
 
 
-def get_logit_lens(messages, model, tokenizer, answer_trigger='', answer_options=['A','B','C','D']):
+def get_model_internals(messages, model, tokenizer, answer_trigger='',
+                        answer_options=['A','B','C','D'], get_attentions=False):
     """
-    For every transformer layer, project the hidden state at the last token
-    back to vocabulary space and return probabilities for A/B/C/D.
-    
-    Returns:
-        np.array of shape (num_layers, 4)
-        columns = probabilities for A, B, C, D at each layer
+    Single forward pass returning everything needed for mechanistic analysis.
+
+    Returns a dict with:
+        'logit_lens':    np.array (num_layers+1, num_options)
+                         softmax prob of each answer option at every layer
+        'hidden_states': np.array (num_layers+1, d_model)
+                         raw last-token hidden state at every layer (float32, CPU)
+        'tokens':        list[str]  — tokenized input (useful for attention viz)
+        'attentions':    np.array (num_layers, num_heads, seq_len)  — only if get_attentions=True
+                         attention weight FROM the last token TO every input position
     """
-    # build prompt exactly like generate_qwen_chat does
     text = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
     text += answer_trigger
     inputs = tokenizer([text], return_tensors="pt").to(model.device)
+    tokens = tokenizer.convert_ids_to_tokens(inputs['input_ids'][0])
 
-    # get token ids for A B C D
     option_ids = [
         tokenizer.encode(opt, add_special_tokens=False)[0]
         for opt in answer_options
     ]
+    unembedding = model.lm_head.weight   # (vocab_size, d_model)
+    final_norm  = model.model.norm
 
-    # forward pass — ask for ALL hidden states
     with torch.no_grad():
         outputs = model(
             **inputs,
-            output_hidden_states=True   # ← this is the key flag
+            output_hidden_states=True,
+            output_attentions=get_attentions,
         )
 
-    # outputs.hidden_states is a tuple of tensors
-    # one per layer, shape: (1, seq_len, d_model)
-    hidden_states = outputs.hidden_states
+    hidden_states = outputs.hidden_states  # tuple of (1, seq_len, d_model) per layer
 
-    # unembedding matrix = final linear layer that maps d_model → vocab
-    unembedding = model.lm_head.weight  # shape: (vocab_size, d_model)
-
-    # final layer norm of the model
-    # needed before unembedding — without this the projections are noisy
-    final_norm = model.model.norm
-
+    # ── logit lens ────────────────────────────────────────────────────
     probs_per_layer = []
-
     for hs in hidden_states:
-        # hidden state at last token position
-        h = hs[0, -1, :]                          # shape: (d_model,)
+        h        = hs[0, -1, :]
+        h_normed = final_norm(h.unsqueeze(0)).squeeze(0)
+        logits   = unembedding @ h_normed
+        probs    = torch.nn.functional.softmax(logits, dim=-1)
+        probs_per_layer.append([probs[tok_id].item() for tok_id in option_ids])
 
-        # apply layer norm
-        h_normed = final_norm(h.unsqueeze(0))      # shape: (1, d_model)
-        h_normed = h_normed.squeeze(0)             # shape: (d_model,)
+    # ── raw hidden states at the last token ───────────────────────────
+    hs_last = torch.stack(
+        [hs[0, -1, :] for hs in hidden_states]
+    ).cpu().float().numpy()   # (num_layers+1, d_model)
 
-        # project to vocabulary
-        logits = unembedding @ h_normed            # shape: (vocab_size,)
+    result = {
+        'logit_lens':    np.array(probs_per_layer),  # (num_layers+1, 4)
+        'hidden_states': hs_last,                    # (num_layers+1, d_model)
+        'tokens':        tokens,
+    }
 
-        # softmax to get probabilities
-        probs = torch.nn.functional.softmax(logits, dim=-1)
+    # ── attention from last token (optional) ─────────────────────────
+    if get_attentions:
+        # outputs.attentions: tuple of (1, num_heads, seq_len, seq_len) per layer
+        attn_last = torch.stack([
+            attn[0, :, -1, :]          # (num_heads, seq_len) — last token's attention
+            for attn in outputs.attentions
+        ]).cpu().float().numpy()       # (num_layers, num_heads, seq_len)
+        result['attentions'] = attn_last
 
-        # extract only A B C D
-        option_probs = [probs[tok_id].item() for tok_id in option_ids]
-        probs_per_layer.append(option_probs)
+    return result
 
-    return np.array(probs_per_layer)   # shape: (num_layers+1, 4)
+
+def get_logit_lens(messages, model, tokenizer, answer_trigger='', answer_options=['A','B','C','D']):
+    """Backward-compatible wrapper — returns only the logit lens array."""
+    return get_model_internals(
+        messages, model, tokenizer, answer_trigger, answer_options
+    )['logit_lens']
+
+
+def compute_dla(hs_array, model, tokenizer, answer_options=['A','B','C','D']):
+    """
+    Direct Logit Attribution: per-layer contribution to each answer option's logit.
+
+    The residual stream is additive: h_final = sum of layer increments.
+    Each increment is projected through the unembedding matrix to quantify
+    how much that layer pushed the model toward or away from each answer.
+
+    Positive value  → layer pushes toward that option.
+    Negative value  → layer pushes away from that option.
+
+    Args:
+        hs_array: np.array (num_layers+1, d_model) from get_model_internals['hidden_states']
+    Returns:
+        np.array (num_layers, num_options) — logit contribution per layer
+    """
+    option_ids = [
+        tokenizer.encode(opt, add_special_tokens=False)[0]
+        for opt in answer_options
+    ]
+    W_U = model.lm_head.weight.detach().cpu().float().numpy()  # (vocab, d_model)
+
+    increments      = np.diff(hs_array, axis=0)       # (num_layers, d_model)
+    logit_contribs  = increments @ W_U.T               # (num_layers, vocab)
+    return logit_contribs[:, option_ids]               # (num_layers, num_options)
 
 def plot_logit_lens(probs_p1, probs_p2b, true_answer, task_name='', idx=0):
     """
@@ -95,16 +135,25 @@ def plot_logit_lens(probs_p1, probs_p2b, true_answer, task_name='', idx=0):
         ['Phase 1 — biased prompt', 'Phase 2b — after self-critique']
     ):
         for i, opt in enumerate(options):
-            # make correct answer green, A red, others gray
-            if opt == true_answer:
+            is_correct  = (opt == true_answer)
+            is_spurious = (opt == 'A')
+
+            if is_correct and is_spurious:
+                # A happens to be the true answer for this example
                 color, lw, alpha = 'green', 2.5, 1.0
-            elif opt == 'A':
+                label = f'(A) ← correct & spurious cue'
+            elif is_correct:
+                color, lw, alpha = 'green', 2.5, 1.0
+                label = f'({opt}) ← correct answer'
+            elif is_spurious:
                 color, lw, alpha = 'red',   2.5, 1.0
+                label = f'(A) ← spurious cue'
             else:
                 color, lw, alpha = 'gray',  1.0, 0.3
+                label = f'({opt})'
 
             ax.plot(layers, probs[:, i],
-                    label=f'({opt})',
+                    label=label,
                     color=color,
                     linewidth=lw,
                     alpha=alpha)
